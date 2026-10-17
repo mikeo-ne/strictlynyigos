@@ -9,25 +9,25 @@ import { renderMarkdown } from "@/lib/markdown";
 import { paymentProvider } from "@/lib/payments";
 import { all } from "@/lib/db";
 import type { Article } from "@/lib/types";
-import { fmtDate, fmtTime, siteUrl } from "@/lib/util";
+import { fmtDate, fmtTime, siteUrl, absUrl } from "@/lib/util";
 import { currentUser } from "@/lib/auth";
 
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const e = eventBySlug((await params).slug);
+  const e = await eventBySlug((await params).slug);
   if (!e) return {};
   return { title: e.title, description: e.tagline || `${fmtDate(e.starts_at)} at ${e.venue}`, openGraph: { images: [e.cover_image || "/images/hero.jpg"] } };
 }
 
 export default async function EventPage({ params }: Props) {
-  const e = eventBySlug((await params).slug);
+  const e = await eventBySlug((await params).slug);
   if (!e) notFound();
   if (e.status === "draft" && !(await currentUser())) notFound();
   const past = isPast(e);
-  const tiers = ticketTypesWithStock(e.id, true);
+  const tiers = await ticketTypesWithStock(e.id, true);
   const lineup = lineupList(e);
-  const related = all<Article>(
+  const related = await all<Article>(
     "SELECT * FROM articles WHERE event_id = ? AND status='published' AND published_at <= ? ORDER BY published_at DESC LIMIT 3",
     e.id,
     new Date().toISOString(),
@@ -42,7 +42,7 @@ export default async function EventPage({ params }: Props) {
     eventStatus: e.status === "cancelled" ? "https://schema.org/EventCancelled" : "https://schema.org/EventScheduled",
     eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
     location: { "@type": "Place", name: e.venue, address: e.address || "Kampala, Uganda" },
-    image: [siteUrl() + (e.cover_image || "/images/hero.jpg")],
+    image: [absUrl(e.cover_image || "/images/hero.jpg")],
     description: e.tagline,
     offers: tiers.map((t) => ({ "@type": "Offer", name: t.name, price: t.price, priceCurrency: "UGX", availability: t.remaining ? "https://schema.org/InStock" : "https://schema.org/SoldOut", url: `${siteUrl()}/events/${e.slug}` })),
     performer: lineup.map((n) => ({ "@type": "Person", name: n })),

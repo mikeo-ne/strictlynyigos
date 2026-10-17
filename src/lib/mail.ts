@@ -10,6 +10,8 @@ function getTransport() {
   if (transporter !== undefined) return transporter;
   if (!process.env.SMTP_HOST) return (transporter = null);
   transporter = nodemailer.createTransport({
+    pool: true,
+    maxConnections: 3,
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === "true",
@@ -54,7 +56,7 @@ export async function sendMail(o: MailOpts) {
       error = e instanceof Error ? e.message : String(e);
     }
   }
-  run(
+  await run(
     "INSERT INTO email_outbox (to_email, subject, html, kind, campaign_id, status, error) VALUES (?,?,?,?,?,?,?)",
     o.to,
     o.subject,
@@ -72,8 +74,8 @@ const esc = (s: string) =>
 export { esc as escapeHtml };
 
 /** Branded, email-client-safe wrapper (tables + inline styles). */
-export function emailLayout(opts: { title: string; preheader?: string; bodyHtml: string; unsubscribeUrl?: string }) {
-  const s = getSettings();
+export async function emailLayout(opts: { title: string; preheader?: string; bodyHtml: string; unsubscribeUrl?: string }) {
+  const s = await getSettings();
   const base = siteUrl();
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(opts.title)}</title></head>
 <body style="margin:0;padding:0;background:#0b0b0b;font-family:Helvetica,Arial,sans-serif;color:#f4f4f4">
@@ -94,4 +96,13 @@ ${opts.unsubscribeUrl ? `You're receiving this because you joined the ${esc(s.si
 export function emailButton(href: string, label: string) {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0"><tr><td style="background:#FED100;border-radius:999px">
 <a href="${href}" style="display:inline-block;padding:14px 28px;color:#000;font-weight:800;text-decoration:none;text-transform:uppercase;letter-spacing:1px;font-size:14px">${esc(label)}</a></td></tr></table>`;
+}
+
+/** Runs async jobs with limited concurrency (used for campaign sends). */
+export async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<unknown>) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) await fn(items[i++]);
+  });
+  await Promise.all(workers);
 }

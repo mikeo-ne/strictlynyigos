@@ -12,12 +12,12 @@ export const metadata = { title: "Order" };
 
 export default async function OrderDetail({ params, searchParams }: { params: Promise<{ ref: string }>; searchParams: Promise<{ msg?: string }> }) {
   await requireUser(["admin"]);
-  const o = orderByRef((await params).ref);
+  const o = await orderByRef((await params).ref);
   if (!o) notFound();
   const { msg } = await searchParams;
-  const ev = eventById(o.event_id)!;
-  const items = orderItems(o.id);
-  const tickets = orderTickets(o.id);
+  const ev = (await eventById(o.event_id))!;
+  const items = await orderItems(o.id);
+  const tickets = await orderTickets(o.id);
   const Hidden = () => <input type="hidden" name="ref" value={o.ref} />;
   return (
     <>

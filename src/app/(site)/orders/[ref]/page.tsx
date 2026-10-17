@@ -11,11 +11,11 @@ export const metadata = { title: "Your tickets", robots: { index: false } };
 export default async function OrderPage({ params, searchParams }: { params: Promise<{ ref: string }>; searchParams: Promise<{ t?: string }> }) {
   const { ref } = await params;
   const { t } = await searchParams;
-  const o = orderByRef(ref);
+  const o = await orderByRef(ref);
   if (!o || o.access_token !== t) notFound();
-  const ev = eventById(o.event_id)!;
-  const items = orderItems(o.id);
-  const tickets = orderTickets(o.id);
+  const ev = (await eventById(o.event_id))!;
+  const items = await orderItems(o.id);
+  const tickets = await orderTickets(o.id);
 
   if (o.status !== "paid") {
     const failed = o.status === "failed" || o.status === "cancelled";

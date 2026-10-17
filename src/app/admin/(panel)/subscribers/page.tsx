@@ -3,7 +3,7 @@ import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { Badge, PageHeader, Stat, Table } from "@/components/admin/ui";
 import { addSubscribersAction, subscriberStatusAction } from "@/app/admin/actions";
 import { requireUser } from "@/lib/auth";
-import { all, get } from "@/lib/db";
+import { all, buildWhere, get } from "@/lib/db";
 import type { Subscriber } from "@/lib/types";
 import { fmtDate } from "@/lib/util";
 
@@ -14,15 +14,17 @@ export default async function Subscribers({ searchParams }: { searchParams: Prom
   const { q = "", status = "subscribed", page = "1" } = await searchParams;
   const p = Math.max(1, Number(page) || 1);
   const per = 50;
-  const where = "(? = 'all' OR status = ?) AND (? = '' OR email LIKE ? OR name LIKE ?)";
-  const args = [status, status, q, `%${q}%`, `%${q}%`];
-  const total = get<{ n: number }>(`SELECT COUNT(*) n FROM subscribers WHERE ${where}`, ...args)?.n ?? 0;
-  const rows = all<Subscriber>(`SELECT * FROM subscribers WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, ...args, per, (p - 1) * per);
-  const n = (sql: string, ...a: unknown[]) => get<{ n: number }>(sql, ...a)?.n ?? 0;
-  const active = n("SELECT COUNT(*) n FROM subscribers WHERE status='subscribed'");
-  const month = n("SELECT COUNT(*) n FROM subscribers WHERE status='subscribed' AND created_at > ?", new Date(Date.now() - 30 * 86400e3).toISOString());
-  const unsub = n("SELECT COUNT(*) n FROM subscribers WHERE status='unsubscribed'");
-  const sources = all<{ source: string; n: number }>("SELECT source, COUNT(*) n FROM subscribers WHERE status='subscribed' GROUP BY source ORDER BY n DESC LIMIT 5");
+  const { where, params: args } = buildWhere([
+    status !== "all" && ["status = ?", status],
+    !!q.trim() && ["email ILIKE ? OR name ILIKE ?", `%${q.trim()}%`, `%${q.trim()}%`],
+  ]);
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM subscribers ${where}`, ...args))?.n ?? 0;
+  const rows = await all<Subscriber>(`SELECT * FROM subscribers ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, ...args, per, (p - 1) * per);
+  const n = async (sql: string, ...a: unknown[]) => (await get<{ n: number }>(sql, ...a))?.n ?? 0;
+  const active = await n("SELECT COUNT(*) AS n FROM subscribers WHERE status='subscribed'");
+  const month = await n("SELECT COUNT(*) AS n FROM subscribers WHERE status='subscribed' AND created_at > ?", new Date(Date.now() - 30 * 86400e3).toISOString());
+  const unsub = await n("SELECT COUNT(*) AS n FROM subscribers WHERE status='unsubscribed'");
+  const sources = await all<{ source: string; n: number }>("SELECT source, COUNT(*) AS n FROM subscribers WHERE status='subscribed' GROUP BY source ORDER BY n DESC LIMIT 5");
   const pages = Math.ceil(total / per);
   const link = (pg: number) => `?${new URLSearchParams({ q, status, page: String(pg) })}`;
 

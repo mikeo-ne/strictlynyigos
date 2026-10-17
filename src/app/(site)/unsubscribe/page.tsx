@@ -6,7 +6,7 @@ export const metadata = { title: "Unsubscribe", robots: { index: false } };
 
 export default async function Unsubscribe({ searchParams }: { searchParams: Promise<{ token?: string; done?: string }> }) {
   const { token = "", done } = await searchParams;
-  const sub = get<{ email: string; status: string }>("SELECT email, status FROM subscribers WHERE token = ?", token);
+  const sub = await get<{ email: string; status: string }>("SELECT email, status FROM subscribers WHERE token = ?", token);
   return (
     <div className="mx-auto max-w-lg px-4 py-24 text-center">
       {!sub ? (

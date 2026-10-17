@@ -27,12 +27,12 @@ function TierFields({ t }: { t?: { name: string; description: string; price: num
 
 export default async function EditEvent({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string; error?: string }> }) {
   await requireUser(["admin"]);
-  const e = eventById(Number((await params).id));
+  const e = await eventById(Number((await params).id));
   if (!e) notFound();
   const { saved, error } = await searchParams;
-  const tiers = ticketTypesWithStock(e.id);
-  const checkins = get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE event_id = ? AND checked_in_at IS NOT NULL", e.id)?.n ?? 0;
-  const issued = get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE event_id = ?", e.id)?.n ?? 0;
+  const tiers = await ticketTypesWithStock(e.id);
+  const checkins = (await get<{ n: number }>("SELECT COUNT(*) AS n FROM tickets WHERE event_id = ? AND checked_in_at IS NOT NULL", e.id))?.n ?? 0;
+  const issued = (await get<{ n: number }>("SELECT COUNT(*) AS n FROM tickets WHERE event_id = ?", e.id))?.n ?? 0;
   const msg = saved === "hidden" ? "That ticket type has sales, so it was hidden instead of deleted." : saved ? "Saved." : undefined;
 
   return (

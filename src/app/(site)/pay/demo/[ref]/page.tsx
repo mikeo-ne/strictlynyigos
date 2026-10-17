@@ -9,11 +9,11 @@ export const metadata = { title: "Pay with Mobile Money", robots: { index: false
 export default async function DemoPay({ params, searchParams }: { params: Promise<{ ref: string }>; searchParams: Promise<{ t?: string }> }) {
   const { ref } = await params;
   const { t } = await searchParams;
-  const o = orderByRef(ref);
+  const o = await orderByRef(ref);
   if (!o || o.access_token !== t || o.provider !== "demo") notFound();
   if (o.status !== "pending") redirect(orderUrl(o));
-  const ev = eventById(o.event_id)!;
-  const items = orderItems(o.id);
+  const ev = (await eventById(o.event_id))!;
+  const items = await orderItems(o.id);
   return (
     <div className="mx-auto max-w-md px-4 py-16">
       <div className="card overflow-hidden">

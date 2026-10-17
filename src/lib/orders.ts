@@ -13,7 +13,7 @@ export interface CartLine {
   qty: number;
 }
 
-export function createOrder(input: {
+export async function createOrder(input: {
   eventId: number;
   lines: CartLine[];
   name: string;
@@ -21,29 +21,31 @@ export function createOrder(input: {
   phone: string;
   optIn: boolean;
   provider: string;
-}): Order {
-  return tx(() => {
-    const ev = eventById(input.eventId);
+  free?: boolean; // comp / guest-list tickets
+}): Promise<Order> {
+  return tx(async (q) => {
+    const ev = await eventById(input.eventId, q);
     if (!ev || ev.status !== "published") throw new OrderError("This event is not on sale.");
     if (new Date(ev.ends_at || ev.starts_at).getTime() < Date.now()) throw new OrderError("This event has already happened.");
-    const stock = new Map(ticketTypesWithStock(ev.id, true).map((t) => [t.id, t]));
+    // Lock this event's ticket rows so concurrent checkouts can't oversell.
+    const stock = new Map((await ticketTypesWithStock(ev.id, true, q, true)).map((t) => [t.id, t]));
     const lines = input.lines.filter((l) => l.qty > 0);
     if (!lines.length) throw new OrderError("Pick at least one ticket.");
     let total = 0;
     for (const l of lines) {
       const t = stock.get(l.ticketTypeId);
       if (!t) throw new OrderError("That ticket type is no longer available.");
-      if (l.qty > t.max_per_order) throw new OrderError(`Max ${t.max_per_order} × ${t.name} per order.`);
+      if (l.qty > t.max_per_order && !input.free) throw new OrderError(`Max ${t.max_per_order} × ${t.name} per order.`);
       if (l.qty > t.remaining)
         throw new OrderError(t.remaining === 0 ? `${t.name} is sold out.` : `Only ${t.remaining} × ${t.name} left.`);
-      total += t.price * l.qty;
+      total += input.free ? 0 : t.price * l.qty;
     }
     let ref = "";
     do ref = "SN-" + code(6);
-    while (get("SELECT 1 FROM orders WHERE ref = ?", ref));
-    const info = run(
+    while (await q.get("SELECT 1 FROM orders WHERE ref = ?", ref));
+    const orderId = await q.insert(
       `INSERT INTO orders (ref, access_token, event_id, buyer_name, email, phone, total, provider, marketing_opt_in, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
       ref,
       token(18),
       ev.id,
@@ -53,18 +55,16 @@ export function createOrder(input: {
       total,
       input.provider,
       input.optIn ? 1 : 0,
-      "pending",
     );
-    const orderId = Number(info.lastInsertRowid);
     for (const l of lines)
-      run(
-        "INSERT INTO order_items (order_id, ticket_type_id, qty, unit_price) VALUES (?,?,?,?)",
+      await q.run(
+        "INSERT INTO order_items (order_id, ticket_type_id, qty, unit_price) VALUES (?, ?, ?, ?)",
         orderId,
         l.ticketTypeId,
         l.qty,
-        stock.get(l.ticketTypeId)!.price,
+        input.free ? 0 : stock.get(l.ticketTypeId)!.price,
       );
-    return get<Order>("SELECT * FROM orders WHERE id = ?", orderId)!;
+    return (await q.get<Order>("SELECT * FROM orders WHERE id = ?", orderId))!;
   });
 }
 
@@ -75,7 +75,7 @@ export function orderByRef(ref: string) {
 export function orderItems(orderId: number) {
   return all<{ qty: number; unit_price: number; name: string; admits: number; ticket_type_id: number }>(
     `SELECT oi.qty, oi.unit_price, oi.ticket_type_id, t.name, t.admits FROM order_items oi
-     JOIN ticket_types t ON t.id = oi.ticket_type_id WHERE oi.order_id = ?`,
+     JOIN ticket_types t ON t.id = oi.ticket_type_id WHERE oi.order_id = ? ORDER BY oi.id`,
     orderId,
   );
 }
@@ -92,39 +92,43 @@ export function orderUrl(o: Pick<Order, "ref" | "access_token">) {
   return `/orders/${o.ref}?t=${o.access_token}`;
 }
 
-/** Idempotent: safe to call from both redirect callback and webhook. */
+/** Idempotent: safe to call from both the redirect callback and the webhook at the same time. */
 export async function markOrderPaid(ref: string, providerRef: string | null) {
-  const changed = tx(() => {
-    const o = orderByRef(ref);
+  const changed = await tx(async (q) => {
+    const o = await q.get<Order>("SELECT * FROM orders WHERE ref = ? FOR UPDATE", ref);
     if (!o) throw new OrderError("Order not found");
     if (o.status === "paid") return false;
-    run("UPDATE orders SET status='paid', paid_at=?, provider_ref=COALESCE(?, provider_ref) WHERE id = ?", new Date().toISOString(), providerRef, o.id);
-    for (const item of orderItems(o.id)) {
+    await q.run(
+      "UPDATE orders SET status = 'paid', paid_at = ?, provider_ref = COALESCE(?, provider_ref) WHERE id = ?",
+      new Date().toISOString(),
+      providerRef,
+      o.id,
+    );
+    const items = await q.all<{ ticket_type_id: number; qty: number }>("SELECT ticket_type_id, qty FROM order_items WHERE order_id = ?", o.id);
+    for (const item of items) {
       for (let i = 0; i < item.qty; i++) {
-        let c = "";
-        do c = code(10);
-        while (get("SELECT 1 FROM tickets WHERE code = ?", c));
-        run("INSERT INTO tickets (code, order_id, ticket_type_id, event_id) VALUES (?,?,?,?)", c, o.id, item.ticket_type_id, o.event_id);
+        // 10 chars from a 32-symbol alphabet: collisions are astronomically unlikely; UNIQUE constraint backs it up.
+        await q.run("INSERT INTO tickets (code, order_id, ticket_type_id, event_id) VALUES (?, ?, ?, ?)", code(10), o.id, item.ticket_type_id, o.event_id);
       }
     }
     return true;
   });
   if (changed) {
-    const o = orderByRef(ref)!;
+    const o = (await orderByRef(ref))!;
     if (o.marketing_opt_in) await subscribe(o.email, { name: o.buyer_name, phone: o.phone, source: "ticket purchase", welcome: false });
     await sendOrderEmail(o);
   }
   return changed;
 }
 
-export function markOrderFailed(ref: string, status: "failed" | "cancelled" = "failed") {
-  run("UPDATE orders SET status = ? WHERE ref = ? AND status = 'pending'", status, ref);
+export async function markOrderFailed(ref: string, status: "failed" | "cancelled" = "failed") {
+  await run("UPDATE orders SET status = ? WHERE ref = ? AND status = 'pending'", status, ref);
 }
 
 export async function sendOrderEmail(o: Order) {
-  const ev = eventById(o.event_id)!;
-  const items = orderItems(o.id);
-  const tickets = orderTickets(o.id);
+  const ev = (await eventById(o.event_id))!;
+  const items = await orderItems(o.id);
+  const tickets = await orderTickets(o.id);
   const link = siteUrl() + orderUrl(o);
   const rows = items
     .map(
@@ -135,11 +139,11 @@ export async function sendOrderEmail(o: Order) {
   await sendMail({
     to: o.email,
     subject: `Your tickets: ${ev.title} (${o.ref})`,
-    html: emailLayout({
+    html: await emailLayout({
       title: "Your tickets",
       preheader: `${tickets.length} ticket(s) for ${ev.title}`,
       bodyHtml: `<h1 style="margin:0 0 8px;color:#fff;font-size:24px">You're in, ${escapeHtml(o.buyer_name.split(" ")[0])}! 🎉</h1>
-<p style="margin:0 0 16px">Payment received for <b>${escapeHtml(ev.title)}</b>.</p>
+<p style="margin:0 0 16px">${o.total > 0 ? "Payment received for" : "You're on the guest list for"} <b>${escapeHtml(ev.title)}</b>.</p>
 <p style="margin:0;color:#FED100;font-weight:bold">${escapeHtml(fmtDateTime(ev.starts_at))}</p>
 <p style="margin:0 0 16px;color:#bdbdbd">${escapeHtml(ev.venue)}${ev.address ? " — " + escapeHtml(ev.address) : ""}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:15px">${rows}

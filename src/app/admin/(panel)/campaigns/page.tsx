@@ -9,7 +9,7 @@ export const metadata = { title: "Email campaigns" };
 
 export default async function Campaigns() {
   await requireUser(["admin", "editor"]);
-  const rows = all<Campaign>("SELECT * FROM campaigns ORDER BY id DESC");
+  const rows = await all<Campaign>("SELECT * FROM campaigns ORDER BY id DESC");
   return (
     <>
       <PageHeader title="Email campaigns" subtitle="Announce dates, line-ups and early-bird drops to your list." actions={<Link href="/admin/campaigns/new" className="btn btn-gold">+ New campaign</Link>} />

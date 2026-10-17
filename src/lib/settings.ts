@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { all, run } from "./db";
 
 export const DEFAULT_SETTINGS = {
@@ -17,16 +18,17 @@ export const DEFAULT_SETTINGS = {
 
 export type Settings = typeof DEFAULT_SETTINGS;
 
-export function getSettings(): Settings {
-  const rows = all<{ key: string; value: string }>("SELECT key, value FROM settings");
+/** Cached per request, so header/footer/metadata share one query. */
+export const getSettings = cache(async (): Promise<Settings> => {
+  const rows = await all<{ key: string; value: string }>("SELECT key, value FROM settings");
   const s: Record<string, string> = { ...DEFAULT_SETTINGS };
   for (const r of rows) s[r.key] = r.value;
   return s as Settings;
-}
+});
 
-export function saveSettings(values: Partial<Settings>) {
+export async function saveSettings(values: Partial<Settings>) {
   for (const [k, v] of Object.entries(values)) {
     if (!(k in DEFAULT_SETTINGS)) continue;
-    run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", k, v ?? "");
+    await run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", k, v ?? "");
   }
 }

@@ -8,12 +8,13 @@ const extraOrigins = (process.env.ALLOWED_ORIGINS || "")
   .filter(Boolean);
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["better-sqlite3"],
+  // Native/WASM database drivers stay as plain Node modules (not bundled).
+  serverExternalPackages: ["@electric-sql/pglite", "pg"],
   allowedDevOrigins: extraOrigins,
   experimental: {
     serverActions: {
       allowedOrigins: extraOrigins,
-      bodySizeLimit: "8mb",
+      bodySizeLimit: "4mb", // Vercel caps request bodies at 4.5 MB; images go straight to Blob instead.
     },
   },
 };

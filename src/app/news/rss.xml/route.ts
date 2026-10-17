@@ -6,10 +6,10 @@ export const dynamic = "force-dynamic";
 
 const x = (s: string) => s.replace(/[<>&'"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[c]!);
 
-export function GET() {
-  const s = getSettings();
+export async function GET() {
+  const s = await getSettings();
   const base = siteUrl();
-  const items = publishedArticles(30)
+  const items = (await publishedArticles(30))
     .map(
       (a) => `<item><title>${x(a.title)}</title><link>${base}/news/${a.slug}</link><guid>${base}/news/${a.slug}</guid>
 <pubDate>${new Date(a.published_at!).toUTCString()}</pubDate><category>${x(a.category)}</category><description>${x(a.excerpt)}</description></item>`,

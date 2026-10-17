@@ -3,24 +3,24 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { all, get, run, tx } from "@/lib/db";
+import { all, get, insert, run, tx } from "@/lib/db";
 import { renderMarkdown } from "@/lib/markdown";
-import { emailLayout, escapeHtml, sendMail } from "@/lib/mail";
+import { emailLayout, escapeHtml, mapLimit, sendMail } from "@/lib/mail";
 import { createOrder, markOrderPaid, orderByRef, OrderError, sendOrderEmail } from "@/lib/orders";
 import { hashPassword } from "@/lib/password";
 import { DEFAULT_SETTINGS, saveSettings } from "@/lib/settings";
 import { subscribe, unsubscribeUrl } from "@/lib/subscribers";
 import type { Campaign, Order, Role, Subscriber } from "@/lib/types";
-import { int, isEmail, kampalaInputToISO, slugify, str, token } from "@/lib/util";
+import { int, isEmail, kampalaInputToISO, slugify, str, token, safeImageUrl } from "@/lib/util";
 import type { FormState } from "@/app/actions";
 
 const CONTENT: Role[] = ["admin", "editor"];
 const ADMIN: Role[] = ["admin"];
 
-function uniqueSlug(table: "articles" | "events", base: string, id?: number) {
+async function uniqueSlug(table: "articles" | "events", base: string, id?: number) {
   let slug = slugify(base);
   let i = 2;
-  while (get(`SELECT 1 FROM ${table} WHERE slug = ? AND id != ?`, slug, id ?? 0)) slug = `${slugify(base)}-${i++}`;
+  while (await get(`SELECT 1 FROM ${table} WHERE slug = ? AND id != ?`, slug, id ?? 0)) slug = `${slugify(base)}-${i++}`;
   return slug;
 }
 
@@ -37,7 +37,7 @@ export async function saveArticleAction(_: FormState, fd: FormData): Promise<For
   const title = str(fd, "title");
   if (!title) return { error: "Give your article a title." };
   const intent = str(fd, "intent"); // draft | publish | save
-  const existing = id ? get<{ status: string; published_at: string | null }>("SELECT status, published_at FROM articles WHERE id = ?", id) : undefined;
+  const existing = id ? await get<{ status: string; published_at: string | null }>("SELECT status, published_at FROM articles WHERE id = ?", id) : undefined;
   let status = existing?.status || "draft";
   if (intent === "publish") status = "published";
   if (intent === "draft") status = "draft";
@@ -45,11 +45,11 @@ export async function saveArticleAction(_: FormState, fd: FormData): Promise<For
   if (status === "published" && !publishedAt) publishedAt = new Date().toISOString();
   const eventId = int(fd, "event_id") || null;
   const vals = {
-    slug: uniqueSlug("articles", str(fd, "slug") || title, id || undefined),
+    slug: await uniqueSlug("articles", str(fd, "slug") || title, id || undefined),
     title,
     excerpt: str(fd, "excerpt").slice(0, 400),
     body_md: (fd.get("body_md") as string) || "",
-    cover_image: str(fd, "cover_image"),
+    cover_image: safeImageUrl(str(fd, "cover_image")),
     category: str(fd, "category") || "News",
     author_name: str(fd, "author_name") || u.name,
     event_id: eventId,
@@ -59,16 +59,14 @@ export async function saveArticleAction(_: FormState, fd: FormData): Promise<For
   };
   let newId = id;
   if (id) {
-    run(
+    await run(
       `UPDATE articles SET slug=?, title=?, excerpt=?, body_md=?, cover_image=?, category=?, author_name=?, event_id=?, status=?, featured=?, published_at=?, updated_at=? WHERE id=?`,
       vals.slug, vals.title, vals.excerpt, vals.body_md, vals.cover_image, vals.category, vals.author_name, vals.event_id, vals.status, vals.featured, vals.published_at, new Date().toISOString(), id,
     );
   } else {
-    newId = Number(
-      run(
+    newId = await insert(
         `INSERT INTO articles (slug, title, excerpt, body_md, cover_image, category, author_name, event_id, status, featured, published_at, author_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         vals.slug, vals.title, vals.excerpt, vals.body_md, vals.cover_image, vals.category, vals.author_name, vals.event_id, vals.status, vals.featured, vals.published_at, u.id,
-      ).lastInsertRowid,
     );
   }
   revalidatePath("/", "layout");
@@ -77,7 +75,7 @@ export async function saveArticleAction(_: FormState, fd: FormData): Promise<For
 
 export async function deleteArticleAction(fd: FormData) {
   await requireUser(CONTENT);
-  run("DELETE FROM articles WHERE id = ?", int(fd, "id"));
+  await run("DELETE FROM articles WHERE id = ?", int(fd, "id"));
   redirect("/admin/articles?deleted=1");
 }
 
@@ -94,7 +92,7 @@ export async function saveEventAction(_: FormState, fd: FormData): Promise<FormS
   if (endsAt && endsAt < startsAt) return { error: "End time must be after the start time." };
   const status = ["draft", "published", "cancelled"].includes(str(fd, "status")) ? str(fd, "status") : "draft";
   const v = [
-    uniqueSlug("events", str(fd, "slug") || title, id || undefined),
+    await uniqueSlug("events", str(fd, "slug") || title, id || undefined),
     title,
     str(fd, "tagline"),
     (fd.get("description_md") as string) || "",
@@ -103,23 +101,21 @@ export async function saveEventAction(_: FormState, fd: FormData): Promise<FormS
     str(fd, "map_url"),
     startsAt,
     endsAt,
-    str(fd, "cover_image"),
+    safeImageUrl(str(fd, "cover_image")),
     str(fd, "lineup"),
     int(fd, "age_limit", 18),
     status,
   ];
   let newId = id;
   if (id) {
-    run(
+    await run(
       `UPDATE events SET slug=?, title=?, tagline=?, description_md=?, venue=?, address=?, map_url=?, starts_at=?, ends_at=?, cover_image=?, lineup=?, age_limit=?, status=?, updated_at=? WHERE id=?`,
       ...v, new Date().toISOString(), id,
     );
   } else {
-    newId = Number(
-      run(
+    newId = await insert(
         `INSERT INTO events (slug, title, tagline, description_md, venue, address, map_url, starts_at, ends_at, cover_image, lineup, age_limit, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         ...v,
-      ).lastInsertRowid,
     );
   }
   revalidatePath("/", "layout");
@@ -129,9 +125,9 @@ export async function saveEventAction(_: FormState, fd: FormData): Promise<FormS
 export async function deleteEventAction(fd: FormData) {
   await requireUser(ADMIN);
   const id = int(fd, "id");
-  const orders = get<{ n: number }>("SELECT COUNT(*) n FROM orders WHERE event_id = ?", id)?.n ?? 0;
+  const orders = (await get<{ n: number }>("SELECT COUNT(*) AS n FROM orders WHERE event_id = ?", id))?.n ?? 0;
   if (orders > 0) redirect(`/admin/events/${id}?error=${encodeURIComponent("This event has orders, so it can't be deleted. Set it to Cancelled or Draft instead.")}`);
-  run("DELETE FROM events WHERE id = ?", id);
+  await run("DELETE FROM events WHERE id = ?", id);
   redirect("/admin/events?deleted=1");
 }
 
@@ -146,14 +142,14 @@ export async function saveTicketTypeAction(fd: FormData) {
   if (!name || price < 0 || quantity < 0) back("Ticket name, price and quantity are required.");
   if (id) {
     const sold =
-      get<{ n: number }>("SELECT COALESCE(SUM(oi.qty),0) n FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.ticket_type_id=? AND o.status='paid'", id)?.n ?? 0;
+      (await get<{ n: number }>("SELECT COALESCE(SUM(oi.qty),0) AS n FROM order_items oi JOIN orders o ON o.id=oi.order_id WHERE oi.ticket_type_id=? AND o.status='paid'", id))?.n ?? 0;
     if (quantity < sold) back(`Quantity can't be lower than the ${sold} already sold.`);
-    run(
+    await run(
       "UPDATE ticket_types SET name=?, description=?, price=?, admits=?, quantity=?, max_per_order=?, sort=?, active=? WHERE id=? AND event_id=?",
       name, str(fd, "description"), price, Math.max(1, int(fd, "admits", 1)), quantity, Math.max(1, int(fd, "max_per_order", 10)), int(fd, "sort"), fd.get("active") === "on" ? 1 : 0, id, eventId,
     );
   } else {
-    run(
+    await run(
       "INSERT INTO ticket_types (event_id, name, description, price, admits, quantity, max_per_order, sort, active) VALUES (?,?,?,?,?,?,?,?,1)",
       eventId, name, str(fd, "description"), price, Math.max(1, int(fd, "admits", 1)), quantity, Math.max(1, int(fd, "max_per_order", 10)), int(fd, "sort"),
     );
@@ -165,9 +161,9 @@ export async function deleteTicketTypeAction(fd: FormData) {
   await requireUser(ADMIN);
   const id = int(fd, "id");
   const eventId = int(fd, "event_id");
-  const used = get("SELECT 1 FROM order_items WHERE ticket_type_id = ? LIMIT 1", id);
-  if (used) run("UPDATE ticket_types SET active = 0 WHERE id = ?", id);
-  else run("DELETE FROM ticket_types WHERE id = ?", id);
+  const used = await get("SELECT 1 FROM order_items WHERE ticket_type_id = ? LIMIT 1", id);
+  if (used) await run("UPDATE ticket_types SET active = 0 WHERE id = ?", id);
+  else await run("DELETE FROM ticket_types WHERE id = ?", id);
   redirect(`/admin/events/${eventId}?saved=${used ? "hidden" : "tickets"}#tickets`);
 }
 
@@ -175,7 +171,7 @@ export async function deleteTicketTypeAction(fd: FormData) {
 
 export async function resendOrderAction(fd: FormData) {
   await requireUser(ADMIN);
-  const o = orderByRef(str(fd, "ref"));
+  const o = await orderByRef(str(fd, "ref"));
   if (o?.status === "paid") await sendOrderEmail(o);
   redirect(`/admin/orders/${str(fd, "ref")}?msg=${encodeURIComponent("Tickets re-sent to " + (o?.email ?? ""))}`);
 }
@@ -192,7 +188,7 @@ export async function setOrderStatusAction(fd: FormData) {
   const ref = str(fd, "ref");
   const status = str(fd, "status");
   if (!["cancelled", "refunded"].includes(status)) redirect(`/admin/orders/${ref}`);
-  run("UPDATE orders SET status = ? WHERE ref = ?", status, ref);
+  await run("UPDATE orders SET status = ? WHERE ref = ?", status, ref);
   redirect(`/admin/orders/${ref}?msg=${encodeURIComponent(`Order ${status}. Its tickets will no longer scan at the door.`)}`);
 }
 
@@ -206,9 +202,9 @@ export async function compTicketsAction(_: FormState, fd: FormData): Promise<For
   if (!name || !isEmail(email)) return { error: "Guest name and a valid email are required." };
   let ref: string;
   try {
-    const o = createOrder({ eventId, lines: [{ ticketTypeId: ttId, qty }], name, email, phone: str(fd, "phone"), optIn: false, provider: "comp" });
-    run("UPDATE orders SET total = 0 WHERE id = ?", o.id);
-    run("UPDATE order_items SET unit_price = 0 WHERE order_id = ?", o.id);
+    const o = await createOrder({ eventId, lines: [{ ticketTypeId: ttId, qty }], name, email, phone: str(fd, "phone"), optIn: false, provider: "comp" });
+    await run("UPDATE orders SET total = 0 WHERE id = ?", o.id);
+    await run("UPDATE order_items SET unit_price = 0 WHERE order_id = ?", o.id);
     await markOrderPaid(o.ref, "COMPLIMENTARY");
     ref = o.ref;
   } catch (e) {
@@ -232,8 +228,8 @@ export type CheckInResult = {
 export async function checkInAction(rawCode: string, eventId: number | null): Promise<CheckInResult> {
   const u = await requireUser(["admin", "door"]);
   const code = rawCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const t = get<{ id: number; checked_in_at: string | null; event_id: number; status: string; buyer_name: string; tname: string; admits: number; etitle: string }>(
-    `SELECT tk.id, tk.checked_in_at, tk.event_id, o.status, o.buyer_name, tt.name tname, tt.admits, e.title etitle
+  const t = await get<{ id: number; checked_in_at: string | null; event_id: number; status: string; buyer_name: string; tname: string; admits: number; etitle: string }>(
+    `SELECT tk.id, tk.checked_in_at, tk.event_id, o.status, o.buyer_name, tt.name AS tname, tt.admits, e.title AS etitle
      FROM tickets tk JOIN orders o ON o.id = tk.order_id JOIN ticket_types tt ON tt.id = tk.ticket_type_id JOIN events e ON e.id = tk.event_id
      WHERE tk.code = ?`,
     code,
@@ -243,14 +239,14 @@ export async function checkInAction(rawCode: string, eventId: number | null): Pr
   if (eventId && t.event_id !== eventId) return { status: "wrong_event", ...base };
   if (t.status !== "paid") return { status: "void", ...base };
   if (t.checked_in_at) return { status: "used", ...base, usedAt: t.checked_in_at };
-  const res = run("UPDATE tickets SET checked_in_at = ?, checked_in_by = ? WHERE id = ? AND checked_in_at IS NULL", new Date().toISOString(), u.id, t.id);
-  if (res.changes === 0) return { status: "used", ...base };
+  const changed = await run("UPDATE tickets SET checked_in_at = ?, checked_in_by = ? WHERE id = ? AND checked_in_at IS NULL", new Date().toISOString(), u.id, t.id);
+  if (changed === 0) return { status: "used", ...base };
   return { status: "ok", ...base };
 }
 
 export async function undoCheckInAction(code: string) {
   await requireUser(["admin", "door"]);
-  run("UPDATE tickets SET checked_in_at = NULL, checked_in_by = NULL WHERE code = ?", code);
+  await run("UPDATE tickets SET checked_in_at = NULL, checked_in_by = NULL WHERE code = ?", code);
 }
 
 /* ------------------------------ Subscribers ------------------------------ */
@@ -268,7 +264,7 @@ export async function addSubscribersAction(_: FormState, fd: FormData): Promise<
     if (!m || !isEmail(m[0])) { invalid++; continue; }
     const email = m[0].toLowerCase();
     const name = line.replace(m[0], "").replace(/[<>",]/g, " ").trim();
-    if (get<Subscriber>("SELECT * FROM subscribers WHERE email = ? AND status='subscribed'", email)) { skipped++; continue; }
+    if (await get<Subscriber>("SELECT * FROM subscribers WHERE email = ? AND status='subscribed'", email)) { skipped++; continue; }
     await subscribe(email, { name, source, welcome });
     added++;
   }
@@ -280,35 +276,35 @@ export async function subscriberStatusAction(fd: FormData) {
   await requireUser(CONTENT);
   const id = int(fd, "id");
   const op = str(fd, "op");
-  if (op === "delete") run("DELETE FROM subscribers WHERE id = ?", id);
-  else if (op === "unsubscribe") run("UPDATE subscribers SET status='unsubscribed', unsubscribed_at=? WHERE id = ?", new Date().toISOString(), id);
-  else if (op === "resubscribe") run("UPDATE subscribers SET status='subscribed', unsubscribed_at=NULL WHERE id = ?", id);
+  if (op === "delete") await run("DELETE FROM subscribers WHERE id = ?", id);
+  else if (op === "unsubscribe") await run("UPDATE subscribers SET status='unsubscribed', unsubscribed_at=? WHERE id = ?", new Date().toISOString(), id);
+  else if (op === "resubscribe") await run("UPDATE subscribers SET status='subscribed', unsubscribed_at=NULL WHERE id = ?", id);
   revalidatePath("/admin/subscribers");
 }
 
 /* ------------------------------ Campaigns ------------------------------ */
 
-function recipientsFor(audience: string): { email: string; name: string; token: string | null }[] {
+async function recipientsFor(audience: string): Promise<{ email: string; name: string; token: string | null }[]> {
   if (audience.startsWith("event:")) {
     const eventId = Number(audience.slice(6));
-    return all<{ email: string; name: string; token: string | null }>(
-      `SELECT o.email, MAX(o.buyer_name) name, s.token FROM orders o LEFT JOIN subscribers s ON s.email = o.email
-       WHERE o.event_id = ? AND o.status = 'paid' AND (s.status IS NULL OR s.status = 'subscribed') GROUP BY o.email`,
+    return await all<{ email: string; name: string; token: string | null }>(
+      `SELECT o.email, MAX(o.buyer_name) AS name, s.token FROM orders o LEFT JOIN subscribers s ON s.email = o.email
+       WHERE o.event_id = ? AND o.status = 'paid' AND (s.status IS NULL OR s.status = 'subscribed') GROUP BY o.email, s.token`,
       eventId,
     );
   }
-  return all("SELECT email, name, token FROM subscribers WHERE status = 'subscribed'");
+  return await all("SELECT email, name, token FROM subscribers WHERE status = 'subscribed'");
 }
 
 export async function audienceCountAction(audience: string) {
   await requireUser(CONTENT);
-  return recipientsFor(audience).length;
+  return (await recipientsFor(audience)).length;
 }
 
-function campaignHtml(c: Pick<Campaign, "subject" | "preheader" | "body_md">, r: { name: string; token: string | null }) {
+async function campaignHtml(c: Pick<Campaign, "subject" | "preheader" | "body_md">, r: { name: string; token: string | null }) {
   const first = (r.name || "").split(" ")[0] || "fam";
   const body = renderMarkdown(c.body_md.replace(/\{\{\s*name\s*\}\}/gi, first));
-  return emailLayout({
+  return await emailLayout({
     title: c.subject,
     preheader: c.preheader,
     unsubscribeUrl: r.token ? unsubscribeUrl(r.token) : undefined,
@@ -325,32 +321,34 @@ export async function saveCampaignAction(_: FormState, fd: FormData): Promise<Fo
   const audience = str(fd, "audience") || "subscribers";
   const preheader = str(fd, "preheader");
   if (!subject) return { error: "Add a subject line." };
-  const existing = id ? get<Campaign>("SELECT * FROM campaigns WHERE id = ?", id) : undefined;
-  if (existing?.status === "sent") return { error: "This campaign has already been sent." };
+  const existing = id ? await get<Campaign>("SELECT * FROM campaigns WHERE id = ?", id) : undefined;
+  if (existing && existing.status !== "draft") return { error: "This campaign has already been sent." };
   let cid = id;
-  if (id) run("UPDATE campaigns SET subject=?, preheader=?, body_md=?, audience=? WHERE id=?", subject, preheader, body, audience, id);
-  else cid = Number(run("INSERT INTO campaigns (subject, preheader, body_md, audience, created_by) VALUES (?,?,?,?,?)", subject, preheader, body, audience, u.id).lastInsertRowid);
+  if (id) await run("UPDATE campaigns SET subject=?, preheader=?, body_md=?, audience=? WHERE id=?", subject, preheader, body, audience, id);
+  else cid = await insert("INSERT INTO campaigns (subject, preheader, body_md, audience, created_by) VALUES (?,?,?,?,?)", subject, preheader, body, audience, u.id);
 
   if (intent === "test") {
-    await sendMail({ to: u.email, subject: `[TEST] ${subject}`, html: campaignHtml({ subject, preheader, body_md: body }, { name: u.name, token: null }), kind: "campaign", campaignId: cid });
+    await sendMail({ to: u.email, subject: `[TEST] ${subject}`, html: await campaignHtml({ subject, preheader, body_md: body }, { name: u.name, token: null }), kind: "campaign", campaignId: cid });
     redirect(`/admin/campaigns/${cid}?msg=${encodeURIComponent(`Test email sent to ${u.email}`)}`);
   }
   if (intent === "send") {
     if (!body.trim()) return { error: "Write something before sending." };
-    const claimed = run("UPDATE campaigns SET status='sent', sent_at=? WHERE id=? AND status='draft'", new Date().toISOString(), cid).changes;
+    // Claim the campaign first so a double-click can't send it twice.
+    const claimed = await run("UPDATE campaigns SET status='sending' WHERE id=? AND status='draft'", cid);
     if (!claimed) return { error: "This campaign has already been sent." };
-    const list = recipientsFor(audience);
-    for (const r of list) {
-      await sendMail({
+    const list = await recipientsFor(audience);
+    // Send a few at a time — keeps big lists within the serverless time limit.
+    await mapLimit(list, 5, async (r) =>
+      sendMail({
         to: r.email,
         subject,
-        html: campaignHtml({ subject, preheader, body_md: body }, r),
+        html: await campaignHtml({ subject, preheader, body_md: body }, r),
         kind: "campaign",
         campaignId: cid,
         headers: r.token ? { "List-Unsubscribe": `<${unsubscribeUrl(r.token)}>` } : undefined,
-      });
-    }
-    run("UPDATE campaigns SET recipients=? WHERE id=?", list.length, cid);
+      }),
+    );
+    await run("UPDATE campaigns SET status='sent', sent_at=?, recipients=? WHERE id=?", new Date().toISOString(), list.length, cid);
     redirect(`/admin/campaigns/${cid}?msg=${encodeURIComponent(`Sent to ${list.length} recipient(s) 🚀`)}`);
   }
   redirect(`/admin/campaigns/${cid}?msg=Saved`);
@@ -358,7 +356,7 @@ export async function saveCampaignAction(_: FormState, fd: FormData): Promise<Fo
 
 export async function deleteCampaignAction(fd: FormData) {
   await requireUser(CONTENT);
-  run("DELETE FROM campaigns WHERE id = ? AND status = 'draft'", int(fd, "id"));
+  await run("DELETE FROM campaigns WHERE id = ? AND status = 'draft'", int(fd, "id"));
   redirect("/admin/campaigns");
 }
 
@@ -373,12 +371,12 @@ export async function addUserAction(_: FormState, fd: FormData): Promise<FormSta
   if (!name || !isEmail(email)) return { error: "Name and valid email required." };
   if (!["admin", "editor", "door"].includes(role)) return { error: "Pick a role." };
   if (password.length < 8) return { error: "Password must be at least 8 characters." };
-  if (get("SELECT 1 FROM users WHERE email = ?", email)) return { error: "That email already has an account." };
-  run("INSERT INTO users (email, name, password_hash, role) VALUES (?,?,?,?)", email, name, hashPassword(password), role);
+  if (await get("SELECT 1 FROM users WHERE email = ?", email)) return { error: "That email already has an account." };
+  await run("INSERT INTO users (email, name, password_hash, role) VALUES (?,?,?,?)", email, name, hashPassword(password), role);
   await sendMail({
     to: email,
     subject: "You've been added to the Strictly Nyigos organiser portal",
-    html: emailLayout({
+    html: await emailLayout({
       title: "Organiser access",
       bodyHtml: `<p>Hi ${escapeHtml(name)}, you now have <b>${role}</b> access to the Strictly Nyigos organiser portal.</p><p>Email: ${escapeHtml(email)}<br>Temporary password: <code style="color:#FED100">${escapeHtml(password)}</code></p><p>Log in at /admin and change your password from the Team page.</p>`,
     }),
@@ -393,15 +391,15 @@ export async function updateUserAction(fd: FormData) {
   const op = str(fd, "op");
   if (id === me.id && op !== "role") redirect("/admin/team?error=" + encodeURIComponent("You can't remove yourself."));
   if (op === "delete") {
-    tx(() => {
-      run("DELETE FROM sessions WHERE user_id = ?", id);
-      run("DELETE FROM users WHERE id = ?", id);
+    await tx(async (q) => {
+      await q.run("DELETE FROM sessions WHERE user_id = ?", id);
+      await q.run("DELETE FROM users WHERE id = ?", id);
     });
   } else if (op === "role") {
     const role = str(fd, "role");
-    const admins = get<{ n: number }>("SELECT COUNT(*) n FROM users WHERE role='admin'")?.n ?? 0;
+    const admins = (await get<{ n: number }>("SELECT COUNT(*) AS n FROM users WHERE role='admin'"))?.n ?? 0;
     if (id === me.id && role !== "admin" && admins <= 1) redirect("/admin/team?error=" + encodeURIComponent("You're the only admin."));
-    if (["admin", "editor", "door"].includes(role)) run("UPDATE users SET role = ? WHERE id = ?", role, id);
+    if (["admin", "editor", "door"].includes(role)) await run("UPDATE users SET role = ? WHERE id = ?", role, id);
   }
   revalidatePath("/admin/team");
 }
@@ -410,7 +408,7 @@ export async function changePasswordAction(_: FormState, fd: FormData): Promise<
   const me = await requireUser();
   const pw = str(fd, "password");
   if (pw.length < 8) return { error: "At least 8 characters." };
-  run("UPDATE users SET password_hash = ? WHERE id = ?", hashPassword(pw), me.id);
+  await run("UPDATE users SET password_hash = ? WHERE id = ?", hashPassword(pw), me.id);
   return { ok: true, message: "Password updated." };
 }
 
@@ -420,7 +418,7 @@ export async function saveSettingsAction(_: FormState, fd: FormData): Promise<Fo
   await requireUser(ADMIN);
   const vals: Record<string, string> = {};
   for (const k of Object.keys(DEFAULT_SETTINGS)) vals[k] = str(fd, k);
-  saveSettings(vals);
+  await saveSettings(vals);
   revalidatePath("/", "layout");
   return { ok: true, message: "Settings saved." };
 }

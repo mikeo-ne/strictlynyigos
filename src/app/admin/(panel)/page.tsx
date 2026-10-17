@@ -9,23 +9,24 @@ import { fmtDate, fmtDateTime, formatUGX, shortUGX } from "@/lib/util";
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
   const u = await requireUser();
   const { denied } = await searchParams;
-  const n = (sql: string, ...p: unknown[]) => (get<{ n: number }>(sql, ...p)?.n ?? 0) as number;
+  const n = async (sql: string, ...p: unknown[]) => ((await get<{ n: number }>(sql, ...p))?.n ?? 0) as number;
   const weekAgo = new Date(Date.now() - 7 * 86400e3).toISOString();
-  const revenue = n("SELECT COALESCE(SUM(total),0) n FROM orders WHERE status='paid'");
-  const tickets = n("SELECT COUNT(*) n FROM tickets");
-  const subs = n("SELECT COUNT(*) n FROM subscribers WHERE status='subscribed'");
-  const subsWeek = n("SELECT COUNT(*) n FROM subscribers WHERE status='subscribed' AND created_at > ?", weekAgo);
-  const articles = n("SELECT COUNT(*) n FROM articles WHERE status='published'");
-  const drafts = n("SELECT COUNT(*) n FROM articles WHERE status='draft'");
-  const ev = nextEvent();
-  const tiers = ev ? ticketTypesWithStock(ev.id) : [];
-  const evRevenue = ev ? n("SELECT COALESCE(SUM(total),0) n FROM orders WHERE status='paid' AND event_id = ?", ev.id) : 0;
-  const evCheckins = ev ? n("SELECT COUNT(*) n FROM tickets WHERE event_id = ? AND checked_in_at IS NOT NULL", ev.id) : 0;
-  const evTickets = ev ? n("SELECT COUNT(*) n FROM tickets WHERE event_id = ?", ev.id) : 0;
-  const recent = all<Order & { title: string }>("SELECT o.*, e.title FROM orders o JOIN events e ON e.id = o.event_id ORDER BY o.id DESC LIMIT 6");
+  const revenue = await n("SELECT COALESCE(SUM(total),0) AS n FROM orders WHERE status='paid'");
+  const tickets = await n("SELECT COUNT(*) AS n FROM tickets");
+  const subs = await n("SELECT COUNT(*) AS n FROM subscribers WHERE status='subscribed'");
+  const subsWeek = await n("SELECT COUNT(*) AS n FROM subscribers WHERE status='subscribed' AND created_at > ?", weekAgo);
+  const articles = await n("SELECT COUNT(*) AS n FROM articles WHERE status='published'");
+  const drafts = await n("SELECT COUNT(*) AS n FROM articles WHERE status='draft'");
+  const ev = await nextEvent();
+  const tiers = ev ? await ticketTypesWithStock(ev.id) : [];
+  const evRevenue = ev ? await n("SELECT COALESCE(SUM(total),0) AS n FROM orders WHERE status='paid' AND event_id = ?", ev.id) : 0;
+  const evCheckins = ev ? await n("SELECT COUNT(*) AS n FROM tickets WHERE event_id = ? AND checked_in_at IS NOT NULL", ev.id) : 0;
+  const evTickets = ev ? await n("SELECT COUNT(*) AS n FROM tickets WHERE event_id = ?", ev.id) : 0;
+  const recent = await all<Order & { title: string }>("SELECT o.*, e.title FROM orders o JOIN events e ON e.id = o.event_id ORDER BY o.id DESC LIMIT 6");
   // Sales per day, last 14 days (Kampala time = UTC+3)
-  const days = all<{ d: string; total: number }>(
-    "SELECT date(paid_at, '+3 hours') d, SUM(total) total FROM orders WHERE status='paid' AND paid_at > ? GROUP BY d",
+  const days = await all<{ d: string; total: number }>(
+    `SELECT to_char((paid_at::timestamptz) AT TIME ZONE 'Africa/Kampala', 'YYYY-MM-DD') AS d, SUM(total) AS total
+     FROM orders WHERE status='paid' AND paid_at > ? GROUP BY 1`,
     new Date(Date.now() - 14 * 86400e3).toISOString(),
   );
   const series = Array.from({ length: 14 }, (_, i) => {

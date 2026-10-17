@@ -11,7 +11,7 @@ export const metadata = { title: "Site settings" };
 
 export default async function SettingsPage() {
   await requireUser(["admin"]);
-  const s = getSettings();
+  const s = await getSettings();
   const F = ({ k, label, hint, area }: { k: keyof typeof s; label: string; hint?: string; area?: boolean }) => (
     <div>
       <label className="label" htmlFor={k}>{label}</label>

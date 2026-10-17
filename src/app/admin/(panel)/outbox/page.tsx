@@ -12,8 +12,8 @@ type Mail = { id: number; to_email: string; subject: string; html: string; kind:
 export default async function Outbox({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
   await requireUser(["admin", "editor"]);
   const { view } = await searchParams;
-  const rows = all<Mail>("SELECT id, to_email, subject, kind, status, error, created_at FROM email_outbox ORDER BY id DESC LIMIT 200");
-  const m = view ? get<Mail>("SELECT * FROM email_outbox WHERE id = ?", Number(view)) : undefined;
+  const rows = await all<Mail>("SELECT id, to_email, subject, kind, status, error, created_at FROM email_outbox ORDER BY id DESC LIMIT 200");
+  const m = view ? await get<Mail>("SELECT * FROM email_outbox WHERE id = ?", Number(view)) : undefined;
   return (
     <>
       <PageHeader

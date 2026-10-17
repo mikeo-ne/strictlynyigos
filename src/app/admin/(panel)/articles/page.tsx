@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Badge, Empty, Flash, PageHeader, Table } from "@/components/admin/ui";
 import { requireUser } from "@/lib/auth";
-import { all } from "@/lib/db";
+import { all, buildWhere } from "@/lib/db";
 import type { Article } from "@/lib/types";
 import { fmtDate } from "@/lib/util";
 
@@ -10,10 +10,8 @@ export const metadata = { title: "Articles" };
 export default async function Articles({ searchParams }: { searchParams: Promise<{ q?: string; status?: string; deleted?: string }> }) {
   await requireUser(["admin", "editor"]);
   const { q = "", status = "", deleted } = await searchParams;
-  const rows = all<Article>(
-    `SELECT * FROM articles WHERE (? = '' OR title LIKE ?) AND (? = '' OR status = ?) ORDER BY COALESCE(published_at, created_at) DESC`,
-    q, `%${q}%`, status, status,
-  );
+  const { where, params } = buildWhere([!!q.trim() && ["title ILIKE ?", `%${q.trim()}%`], !!status && ["status = ?", status]]);
+  const rows = await all<Article>(`SELECT * FROM articles ${where} ORDER BY COALESCE(published_at, created_at) DESC`, ...params);
   const now = new Date().toISOString();
   return (
     <>

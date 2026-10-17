@@ -12,7 +12,7 @@ import { fmtDate, siteUrl } from "@/lib/util";
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const a = articleBySlug((await params).slug);
+  const a = await articleBySlug((await params).slug);
   if (!a) return {};
   return {
     title: a.title,
@@ -22,12 +22,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function ArticlePage({ params }: Props) {
-  const a = articleBySlug((await params).slug);
+  const a = await articleBySlug((await params).slug);
   if (!a) notFound();
   const live = a.status === "published" && a.published_at && new Date(a.published_at) <= new Date();
   if (!live && !(await currentUser())) notFound();
-  const ev = a.event_id ? eventById(a.event_id) : undefined;
-  const more = publishedArticles(4).filter((x) => x.id !== a.id).slice(0, 3);
+  const ev = a.event_id ? await eventById(a.event_id) : undefined;
+  const more = (await publishedArticles(4)).filter((x) => x.id !== a.id).slice(0, 3);
   const shareUrl = `${siteUrl()}/news/${a.slug}`;
   const shareText = encodeURIComponent(`${a.title} ${shareUrl}`);
 

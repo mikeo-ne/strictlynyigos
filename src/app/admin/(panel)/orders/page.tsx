@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Badge, Empty, PageHeader, Stat, Table } from "@/components/admin/ui";
 import { requireUser } from "@/lib/auth";
-import { all, get } from "@/lib/db";
+import { all, buildWhere, get } from "@/lib/db";
 import type { EventRow, Order } from "@/lib/types";
 import { fmtDateTime, formatUGX, shortUGX } from "@/lib/util";
 
@@ -10,18 +10,21 @@ export const metadata = { title: "Orders" };
 export default async function Orders({ searchParams }: { searchParams: Promise<{ event?: string; status?: string; q?: string }> }) {
   await requireUser(["admin"]);
   const { event = "", status = "", q = "" } = await searchParams;
-  const events = all<EventRow>("SELECT * FROM events ORDER BY starts_at DESC");
-  const where = `(? = '' OR o.event_id = ?) AND (? = '' OR o.status = ?) AND (? = '' OR o.ref LIKE ? OR o.email LIKE ? OR o.buyer_name LIKE ? OR o.phone LIKE ?)`;
-  const like = `%${q}%`;
-  const params = [event, event, status, status, q, like, like, like, like];
-  const rows = all<Order & { title: string; tickets: number }>(
-    `SELECT o.*, e.title, (SELECT COUNT(*) FROM tickets t WHERE t.order_id = o.id) tickets FROM orders o JOIN events e ON e.id = o.event_id WHERE ${where} ORDER BY o.id DESC LIMIT 300`,
+  const events = await all<EventRow>("SELECT * FROM events ORDER BY starts_at DESC");
+  const like = `%${q.trim()}%`;
+  const { where, params } = buildWhere([
+    Number(event) > 0 && ["o.event_id = ?", Number(event)],
+    !!status && ["o.status = ?", status],
+    !!q.trim() && ["o.ref ILIKE ? OR o.email ILIKE ? OR o.buyer_name ILIKE ? OR o.phone ILIKE ?", like, like, like, like],
+  ]);
+  const rows = await all<Order & { title: string; tickets: number }>(
+    `SELECT o.*, e.title, (SELECT COUNT(*) FROM tickets t WHERE t.order_id = o.id) AS tickets FROM orders o JOIN events e ON e.id = o.event_id ${where} ORDER BY o.id DESC LIMIT 300`,
     ...params,
   );
-  const sums = get<{ revenue: number; paid: number; pending: number }>(
-    `SELECT COALESCE(SUM(CASE WHEN o.status='paid' THEN total END),0) revenue, COUNT(CASE WHEN o.status='paid' THEN 1 END) paid, COUNT(CASE WHEN o.status='pending' THEN 1 END) pending FROM orders o WHERE ${where}`,
+  const sums = (await get<{ revenue: number; paid: number; pending: number }>(
+    `SELECT COALESCE(SUM(CASE WHEN o.status='paid' THEN total END),0) AS revenue, COUNT(CASE WHEN o.status='paid' THEN 1 END) AS paid, COUNT(CASE WHEN o.status='pending' THEN 1 END) AS pending FROM orders o ${where}`,
     ...params,
-  )!;
+  ))!;
   const qs = new URLSearchParams({ event, status }).toString();
   return (
     <>

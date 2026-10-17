@@ -35,8 +35,8 @@ export async function buyTicketsAction(_: FormState, fd: FormData): Promise<Form
   }
   let target: string;
   try {
-    const order = createOrder({ eventId, lines, name, email, phone, optIn: fd.get("opt_in") === "on", provider: paymentProvider() });
-    const ev = eventById(eventId)!;
+    const order = await createOrder({ eventId, lines, name, email, phone, optIn: fd.get("opt_in") === "on", provider: paymentProvider() });
+    const ev = (await eventById(eventId))!;
     target = await startPayment(order, ev.title);
   } catch (e) {
     if (e instanceof OrderError) return { error: e.message };
@@ -51,18 +51,18 @@ export async function demoPayAction(fd: FormData) {
   const ref = str(fd, "ref");
   const t = str(fd, "t");
   const decision = str(fd, "decision");
-  const order = orderByRef(ref);
+  const order = await orderByRef(ref);
   if (!order || order.access_token !== t || order.provider !== "demo") redirect("/");
   if (order.status === "pending") {
     if (decision === "approve") await markOrderPaid(ref, "DEMO-" + Date.now());
-    else markOrderFailed(ref, "cancelled");
+    else await markOrderFailed(ref, "cancelled");
   }
   redirect(orderUrl(order));
 }
 
 export async function unsubscribeAction(fd: FormData) {
   const t = str(fd, "token");
-  const sub = get<{ id: number }>("SELECT id FROM subscribers WHERE token = ?", t);
-  if (sub) run("UPDATE subscribers SET status='unsubscribed', unsubscribed_at=? WHERE id = ?", new Date().toISOString(), sub.id);
+  const sub = await get<{ id: number }>("SELECT id FROM subscribers WHERE token = ?", t);
+  if (sub) await run("UPDATE subscribers SET status='unsubscribed', unsubscribed_at=? WHERE id = ?", new Date().toISOString(), sub.id);
   redirect(`/unsubscribe?token=${encodeURIComponent(t)}&done=1`);
 }

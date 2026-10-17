@@ -17,7 +17,7 @@ const ROLES = [
 export default async function Team({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const me = await requireUser(["admin"]);
   const { error } = await searchParams;
-  const users = all<User>("SELECT id, email, name, role, created_at FROM users ORDER BY id");
+  const users = await all<User>("SELECT id, email, name, role, created_at FROM users ORDER BY id");
   return (
     <>
       <PageHeader title="Team" subtitle="Give organisers, writers and door staff their own logins." />

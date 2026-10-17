@@ -94,6 +94,23 @@ export function int(fd: FormData, key: string, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Public base URL. On Vercel it falls back to the production domain automatically. */
 export function siteUrl() {
-  return (process.env.SITE_URL || "http://localhost:3000").replace(/\/$/, "");
+  const explicit = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL;
+  if (explicit) return explicit.replace(/\/$/, "");
+  if (process.env.VERCEL_ENV === "production" && process.env.VERCEL_PROJECT_PRODUCTION_URL)
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
+}
+
+/** Absolute URL for a stored path or an already-absolute (e.g. Vercel Blob) URL. */
+export function absUrl(u: string) {
+  return /^https?:\/\//i.test(u) ? u : siteUrl() + (u.startsWith("/") ? u : "/" + u);
+}
+
+/** Only allow site-relative paths or https URLs for images saved from the admin. */
+export function safeImageUrl(u: string) {
+  u = u.trim();
+  return u.startsWith("/") && !u.startsWith("//") ? u : /^https:\/\/[^\s"'()<>]+$/i.test(u) ? u : "";
 }

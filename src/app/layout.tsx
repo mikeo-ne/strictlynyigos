@@ -7,7 +7,7 @@ import { siteUrl } from "@/lib/util";
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const s = getSettings();
+  const s = await getSettings();
   return {
     metadataBase: new URL(siteUrl()),
     title: { default: `${s.site_name} — ${s.tagline}`, template: `%s · ${s.site_name}` },

@@ -99,7 +99,7 @@ export interface Campaign {
   preheader: string;
   body_md: string;
   audience: string;
-  status: "draft" | "sent";
+  status: "draft" | "sending" | "sent";
   recipients: number;
   created_by: number | null;
   created_at: string;

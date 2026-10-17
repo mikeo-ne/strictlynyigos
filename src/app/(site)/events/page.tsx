@@ -5,9 +5,9 @@ import { pastEvents, upcomingEvents } from "@/lib/events";
 
 export const metadata: Metadata = { title: "Events" };
 
-export default function EventsPage() {
-  const up = upcomingEvents();
-  const past = pastEvents();
+export default async function EventsPage() {
+  const up = await upcomingEvents();
+  const past = await pastEvents();
   return (
     <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6">
       <p className="text-sm font-bold uppercase tracking-widest text-jam">Dates & tickets</p>

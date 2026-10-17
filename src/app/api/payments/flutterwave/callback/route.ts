@@ -9,14 +9,14 @@ export async function GET(req: Request) {
   const ref = url.searchParams.get("tx_ref") || "";
   const status = url.searchParams.get("status") || "";
   const txId = url.searchParams.get("transaction_id") || "";
-  const order = orderByRef(ref);
+  const order = await orderByRef(ref);
   if (!order) return NextResponse.redirect(siteUrl() + "/");
   if (order.status === "pending") {
-    if (status === "cancelled") markOrderFailed(ref, "cancelled");
+    if (status === "cancelled") await markOrderFailed(ref, "cancelled");
     else if (txId) {
       const v = await verifyFlutterwave(txId);
       if (isValidPayment(order, v)) await markOrderPaid(ref, v.id!);
-      else if (v.status === "failed") markOrderFailed(ref);
+      else if (v.status === "failed") await markOrderFailed(ref);
     }
   }
   return NextResponse.redirect(siteUrl() + orderUrl(order));

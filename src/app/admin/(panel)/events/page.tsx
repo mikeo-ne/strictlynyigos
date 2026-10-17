@@ -10,9 +10,9 @@ export const metadata = { title: "Events" };
 export default async function Events({ searchParams }: { searchParams: Promise<{ deleted?: string }> }) {
   await requireUser(["admin"]);
   const { deleted } = await searchParams;
-  const rows = all<EventRow & { sold: number; revenue: number }>(
-    `SELECT e.*, (SELECT COUNT(*) FROM tickets t WHERE t.event_id = e.id) sold,
-       (SELECT COALESCE(SUM(total),0) FROM orders o WHERE o.event_id = e.id AND o.status='paid') revenue
+  const rows = await all<EventRow & { sold: number; revenue: number }>(
+    `SELECT e.*, (SELECT COUNT(*) FROM tickets t WHERE t.event_id = e.id) AS sold,
+       (SELECT COALESCE(SUM(total),0) FROM orders o WHERE o.event_id = e.id AND o.status='paid') AS revenue
      FROM events e ORDER BY starts_at DESC`,
   );
   const now = new Date().toISOString();

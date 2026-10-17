@@ -3,8 +3,8 @@ import { Logo } from "./Logo";
 import { NewsletterForm } from "./NewsletterForm";
 import { getSettings } from "@/lib/settings";
 
-export function SiteFooter() {
-  const s = getSettings();
+export async function SiteFooter() {
+  const s = await getSettings();
   const socials = [
     s.instagram && { label: "Instagram", href: `https://instagram.com/${s.instagram.replace("@", "")}` },
     s.x_handle && { label: "X / Twitter", href: `https://x.com/${s.x_handle.replace("@", "")}` },

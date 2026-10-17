@@ -10,9 +10,9 @@ const nav = [
   { href: "/#join", label: "Mailing list" },
 ];
 
-export function SiteHeader() {
-  const s = getSettings();
-  const ev = nextEvent();
+export async function SiteHeader() {
+  const s = await getSettings();
+  const ev = await nextEvent();
   return (
     <>
       {s.announcement && (

@@ -7,8 +7,8 @@ export const metadata: Metadata = { title: "News & stories" };
 
 export default async function NewsPage({ searchParams }: { searchParams: Promise<{ category?: string }> }) {
   const { category } = await searchParams;
-  const cats = articleCategories();
-  const articles = publishedArticles(100, category || undefined);
+  const cats = await articleCategories();
+  const articles = await publishedArticles(100, category || undefined);
   const [first, ...rest] = articles;
   return (
     <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6">

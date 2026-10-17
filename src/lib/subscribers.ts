@@ -7,20 +7,21 @@ import { siteUrl, token } from "./util";
 
 /** Adds (or re-subscribes) an email. Returns true if this is a new/re-activated subscriber. */
 export async function subscribe(email: string, opts: { name?: string; phone?: string; source?: string; welcome?: boolean } = {}) {
-  const existing = get<Subscriber>("SELECT * FROM subscribers WHERE email = ?", email);
+  email = email.toLowerCase();
+  const existing = await get<Subscriber>("SELECT * FROM subscribers WHERE email = ?", email);
   if (existing) {
     if (existing.status === "subscribed") {
-      if (opts.name && !existing.name) run("UPDATE subscribers SET name = ? WHERE id = ?", opts.name, existing.id);
+      if (opts.name && !existing.name) await run("UPDATE subscribers SET name = ? WHERE id = ?", opts.name, existing.id);
       return false;
     }
-    run(
-      "UPDATE subscribers SET status='subscribed', unsubscribed_at=NULL, name=COALESCE(NULLIF(?, ''), name) WHERE id = ?",
+    await run(
+      "UPDATE subscribers SET status = 'subscribed', unsubscribed_at = NULL, name = COALESCE(NULLIF(?, ''), name) WHERE id = ?",
       opts.name || "",
       existing.id,
     );
   } else {
-    run(
-      "INSERT INTO subscribers (email, name, phone, source, token) VALUES (?,?,?,?,?)",
+    await run(
+      "INSERT INTO subscribers (email, name, phone, source, token) VALUES (?, ?, ?, ?, ?) ON CONFLICT (email) DO NOTHING",
       email,
       opts.name || "",
       opts.phone || "",
@@ -29,12 +30,12 @@ export async function subscribe(email: string, opts: { name?: string; phone?: st
     );
   }
   if (opts.welcome !== false) {
-    const sub = get<Subscriber>("SELECT * FROM subscribers WHERE email = ?", email)!;
-    const s = getSettings();
+    const sub = (await get<Subscriber>("SELECT * FROM subscribers WHERE email = ?", email))!;
+    const s = await getSettings();
     await sendMail({
       to: email,
       subject: `You're on the ${s.site_name} list 🔥`,
-      html: emailLayout({
+      html: await emailLayout({
         title: "Welcome",
         preheader: "First to know about dates, venues and early-bird tickets.",
         unsubscribeUrl: unsubscribeUrl(sub.token),

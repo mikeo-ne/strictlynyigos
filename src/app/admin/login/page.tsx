@@ -7,7 +7,7 @@ import { loginAction } from "../auth-actions";
 export const metadata = { title: "Organiser login", robots: { index: false } };
 
 export default async function Login() {
-  if (userCount() === 0) redirect("/admin/setup");
+  if (await userCount() === 0) redirect("/admin/setup");
   if (await currentUser()) redirect("/admin");
   return (
     <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(ellipse_at_top,_#1a2a10,_#0a0a0a_60%)] px-4">

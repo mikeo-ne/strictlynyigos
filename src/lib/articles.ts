@@ -19,7 +19,7 @@ export function publishedArticles(limit = 100, category?: string) {
 
 export function articleCategories() {
   return all<{ category: string; n: number }>(
-    "SELECT category, COUNT(*) n FROM articles WHERE status='published' AND published_at <= ? GROUP BY category ORDER BY n DESC",
+    "SELECT category, COUNT(*) AS n FROM articles WHERE status='published' AND published_at <= ? GROUP BY category ORDER BY n DESC",
     new Date().toISOString(),
   );
 }

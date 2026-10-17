@@ -16,15 +16,15 @@ const faqs = [
   ["Can I get a refund?", "Tickets are non-refundable unless an event is cancelled or moved, in which case we'll contact you by email."],
 ];
 
-export default function Home() {
-  const s = getSettings();
-  const ev = nextEvent();
-  const tiers = ev ? ticketTypesWithStock(ev.id, true) : [];
+export default async function Home() {
+  const s = await getSettings();
+  const ev = await nextEvent();
+  const tiers = ev ? await ticketTypesWithStock(ev.id, true) : [];
   const minPrice = tiers.length ? Math.min(...tiers.map((t) => t.price)) : null;
-  const articles = publishedArticles(4);
-  const past = pastEvents().slice(0, 3);
+  const articles = await publishedArticles(4);
+  const past = (await pastEvents()).slice(0, 3);
   const lineup = ev ? lineupList(ev) : [];
-  const fans = get<{ n: number }>("SELECT COUNT(*) n FROM subscribers WHERE status='subscribed'")?.n ?? 0;
+  const fans = (await get<{ n: number }>("SELECT COUNT(*) AS n FROM subscribers WHERE status='subscribed'"))?.n ?? 0;
   const marquee = lineup.length ? lineup : ["Dancehall", "Slow wine", "Nyigos", "Kampala", "The Most Killa Xperience", "Strictly 18+"];
 
   return (

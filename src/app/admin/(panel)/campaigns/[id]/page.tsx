@@ -10,26 +10,29 @@ import { renderMarkdown } from "@/lib/markdown";
 import type { Campaign, EventRow } from "@/lib/types";
 import { fmtDateTime } from "@/lib/util";
 
+// Sending a campaign runs inside this page's server action; allow up to 5 minutes on Vercel.
+export const maxDuration = 300;
+
 export const metadata = { title: "Campaign" };
 
 export default async function CampaignPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string }> }) {
   await requireUser(["admin", "editor"]);
-  const c = get<Campaign>("SELECT * FROM campaigns WHERE id = ?", Number((await params).id));
+  const c = await get<Campaign>("SELECT * FROM campaigns WHERE id = ?", Number((await params).id));
   if (!c) notFound();
   const { msg } = await searchParams;
-  if (c.status === "sent") {
-    const stats = all<{ status: string; n: number }>("SELECT status, COUNT(*) n FROM email_outbox WHERE campaign_id = ? AND subject NOT LIKE '[TEST]%' GROUP BY status", c.id);
+  if (c.status !== "draft") {
+    const stats = await all<{ status: string; n: number }>("SELECT status, COUNT(*) AS n FROM email_outbox WHERE campaign_id = ? AND subject NOT LIKE '[TEST]%' GROUP BY status", c.id);
     return (
       <>
-        <PageHeader title={c.subject} subtitle={<><Badge s="sent" /> · {fmtDateTime(c.sent_at)} · {c.recipients} recipients</>} />
+        <PageHeader title={c.subject} subtitle={c.status === "sent" ? <><Badge s="sent" /> · {fmtDateTime(c.sent_at)} · {c.recipients} recipients</> : <><Badge s="sending" /> · sending in progress — refresh in a minute</>} />
         <Flash msg={msg} />
         <div className="mb-6 flex gap-3">{stats.map((s) => <div key={s.status} className="card px-4 py-2 text-sm"><Badge s={s.status} /> {s.n}</div>)}</div>
         <div className="card max-w-2xl p-8"><div className="prose-sn" dangerouslySetInnerHTML={{ __html: renderMarkdown(c.body_md) }} /></div>
       </>
     );
   }
-  const events = all<EventRow>("SELECT * FROM events WHERE status != 'draft' ORDER BY starts_at DESC");
-  const n = get<{ n: number }>("SELECT COUNT(*) n FROM subscribers WHERE status='subscribed'")?.n ?? 0;
+  const events = await all<EventRow>("SELECT * FROM events WHERE status != 'draft' ORDER BY starts_at DESC");
+  const n = (await get<{ n: number }>("SELECT COUNT(*) AS n FROM subscribers WHERE status='subscribed'"))?.n ?? 0;
   return (
     <>
       <PageHeader title="Edit campaign" subtitle={<Badge s="draft" />} />

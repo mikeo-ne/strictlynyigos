@@ -1,5 +1,5 @@
 import "server-only";
-import { all, get } from "./db";
+import { all, get, type Q } from "./db";
 import type { EventRow, TicketTypeWithStock } from "./types";
 
 /** Pending (unpaid) orders hold their tickets for this long. */
@@ -27,24 +27,26 @@ export function pastEvents() {
   );
 }
 
-export function nextEvent() {
-  return upcomingEvents()[0];
+export async function nextEvent() {
+  return (await upcomingEvents())[0];
 }
 
 export function eventBySlug(slug: string) {
   return get<EventRow>("SELECT * FROM events WHERE slug = ?", slug);
 }
 
-export function eventById(id: number) {
-  return get<EventRow>("SELECT * FROM events WHERE id = ?", id);
+export function eventById(id: number, q: Pick<Q, "get"> = { get }) {
+  return q.get<EventRow>("SELECT * FROM events WHERE id = ?", id);
 }
 
 export function isPast(e: EventRow) {
   return new Date(e.ends_at || e.starts_at).getTime() < Date.now();
 }
 
-export function ticketTypesWithStock(eventId: number, onlyActive = false): TicketTypeWithStock[] {
-  return all<TicketTypeWithStock>(
+/** Pass a transaction `q` + lock=true to lock the rows (prevents overselling under concurrency). */
+export async function ticketTypesWithStock(eventId: number, onlyActive = false, q: Pick<Q, "all"> = { all }, lock = false): Promise<TicketTypeWithStock[]> {
+  if (lock) await q.all("SELECT id FROM ticket_types WHERE event_id = ? FOR UPDATE", eventId);
+  const rows = await q.all<TicketTypeWithStock>(
     `SELECT t.*,
        COALESCE((SELECT SUM(oi.qty) FROM order_items oi JOIN orders o ON o.id = oi.order_id
                  WHERE oi.ticket_type_id = t.id
@@ -53,7 +55,8 @@ export function ticketTypesWithStock(eventId: number, onlyActive = false): Ticke
      ORDER BY t.sort, t.price`,
     holdCutoff(),
     eventId,
-  ).map((t) => ({ ...t, remaining: Math.max(0, t.quantity - t.sold) }));
+  );
+  return rows.map((t) => ({ ...t, remaining: Math.max(0, t.quantity - t.sold) }));
 }
 
 export function lineupList(e: EventRow) {

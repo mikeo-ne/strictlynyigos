@@ -12,7 +12,7 @@ export async function POST(req: Request) {
   const id = body?.data?.id;
   const ref = body?.data?.tx_ref;
   if (!id || !ref) return new Response("ignored", { status: 200 });
-  const order = orderByRef(ref);
+  const order = await orderByRef(ref);
   if (order && order.status !== "paid") {
     const v = await verifyFlutterwave(String(id));
     if (isValidPayment(order, v)) await markOrderPaid(ref, v.id!);
